@@ -6,6 +6,7 @@ from ncs.dp import Action
 import requests
 import json
 import time
+import traceback
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
 
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
@@ -13,6 +14,24 @@ requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 # ---------------
 # ACTIONS EXAMPLE
 # ---------------
+class DeleteNATPolicy(Action):
+    @Action.action
+    def cb_action(self, uinfo, name, kp, input, output, trans):
+        self.log.info('action name: ', name)
+
+        with ncs.maapi.single_read_trans(uinfo.username, 'fmc-extension',
+                                         db=ncs.OPERATIONAL) as trans:
+            op_root = ncs.maagic.get_root(trans)
+            policy = ncs.maagic.get_node(trans, kp)
+            fmc_device = policy._parent._parent._parent._parent
+
+            (authgroup, username, password) = getVNFPasswords(self.log, op_root, fmc_device)
+
+            fmc = FMC(fmc_device.address, username, password, self.log)
+            fmc.tokenGeneration('Global')
+            policyassId = fmc_device.ciscofmc_id_store.policy.ftdnatpolicies[policy.name].id
+            fmc.removePolicyAssignments(policyassId, None )
+
 class ChangePolicy(Action):
     @Action.action
     def cb_action(self, uinfo, name, kp, input, output, trans):
@@ -26,10 +45,10 @@ class ChangePolicy(Action):
 
             (authgroup, username, password) = getVNFPasswords(self.log, op_root, fmc_device)
 
-            fmc = FMC(fmc_device.address, username, password)
-            fmc.tokenGeneration('default')
+            fmc = FMC(fmc_device.address, username, password, self.log)
+            fmc.tokenGeneration('Global')
 
-            accesspolicyid = fmc_device.config.policy.accesspolicies[input.policy]
+            accesspolicyid = fmc_device.ciscofmc_id_store.policy.accesspolicies[input.policy].id
             deviceId = fmc_device.ciscofmc_id_store.devices.devicerecords[devicerecord.name].id
             fmc.modifyPolicyAssignments(accesspolicyid, "AccessPolicy", deviceId)
 
@@ -49,7 +68,7 @@ class FMC (object):
     Password: FMC Password for API user
     """
 
-    def __init__(self, host, username, password):
+    def __init__(self, host, username, password, log):
         """Return FMC object whose attributes are host, username and password.
         init
         """
@@ -58,6 +77,7 @@ class FMC (object):
         self.password = password
         self.headers = {'Content-Type': 'application/json'}
         self.uuid = ""
+        self.log = log
 
 
     def tokenGeneration(self, domain):
@@ -162,6 +182,9 @@ class FMC (object):
             # REST call with SSL verification turned off:
             req = requests.Session()
             req.trust_env = False
+            self.log.info(url)
+            self.log.info(self.headers)
+            self.log.info(put_data)
             r = req.put(url, data=put_data, headers=self.headers, verify=False)
             # REST call with SSL verification turned on:
             # r = requests.put(url, data=json.dumps(put_data), headers=self.headers, verify='/path/to/ssl_certificate')
@@ -178,6 +201,8 @@ class FMC (object):
         except requests.exceptions.HTTPError as err:
             print ("Error in connection --> "+str(err))
             print("Error occurred in PUT --> "+resp)
+            self.log.error(traceback.format_exc())
+            raise Exception(err)
         finally:
             if r:
                 r.close()
@@ -710,34 +735,47 @@ class FMC (object):
         server = "https://"+self.host
         api_path = "/api/fmc_config/v1/domain/" + str(self.uuid) + "/assignment/policyassignments/" + str(policyassId)
         url = server + api_path
-        template = JSON_TEMPLATES.get_template('removepolicyassignment.j2.json')
-        payload = template.render(policyassignmentid=policyassId, policytype=policyType)
-        self.RESTput(url,payload)
+        payload = {
+    "type": "PolicyAssignment",
+    "policy": {
+      "type": "FTDNatPolicy",
+      "id": ""
+    },
+    "targets": [ ]
+}
+        payload['policy']['id'] = policyassId
+        #template = JSON_TEMPLATES.get_template('removepolicyassignment.j2.json')
+        #payload = template.render(policyassignmentid=policyassId, policytype=policyType)
+        self.RESTput(url,json.dumps(payload))
         return
 
     def modifyPolicyAssignments(self, policyassId, policyType, deviceId):
         global resp, json_resp
         server = "https://"+self.host
         api_path = "/api/fmc_config/v1/domain/" + str(self.uuid) + "/assignment/policyassignments/" + str(policyassId)
+        #api_path = "/api/fmc_config/v1/domain/" + str(self.uuid) + "/assignment/policyassignments"
         url = server + api_path
         payload = {
+                   "type": "PolicyAssignment",
                    "targets": [
                     {
                      "id": "", 
-                     "type": "Device"
+                     "type": "Device",
+                              "keepLocalEvents": "false"
                     }
                    ],
                    "policy": {
                               "id": "",
                               "type": ""
-                   }
+                              }
                   }
         payload['targets'][0]['id'] = deviceId
         payload['policy']['id'] = policyassId
         payload['policy']['type'] = policyType
+        self.log.info(payload)
         #template = JSON_TEMPLATES.get_template('modifypolicyassignment.j2.json')
         #payload = template.render(policytype=policyType, policyassignmentid=policyassId, devicetargetid=deviceId)
-        self.RESTput(url,payload)
+        self.RESTput(url,json.dumps(payload))
         return
 
 
@@ -751,6 +789,7 @@ class Main(ncs.application.Application):
             m.install_crypto_keys()
 
         self.register_action('fmc-ned-extension-action', ChangePolicy)
+        self.register_action('fmc-ned-extension-delete-natpolicy-action', DeleteNATPolicy)
 
     def teardown(self):
         self.log.info('Main FINISHED')

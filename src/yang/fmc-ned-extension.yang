@@ -15,6 +15,20 @@ module fmc-ned-extension {
       "Initial revision.";
   }
 
+  augment /ncs:devices/ncs:device/ncs:config/fmc:policy/fmc:ftdnatpolicies {
+    when "../../../ncs:capability/ncs:uri = 'http://tail-f.com/ned/cisco-fmc'";
+    tailf:action delete {
+      tailf:actionpoint fmc-ned-extension-delete-natpolicy-action;
+      input {
+      }
+      output {
+        leaf result {
+          type string;
+        }
+      }
+    }
+  }
+
   augment /ncs:devices/ncs:device/ncs:config/fmc:devices/fmc:devicerecords {
     when "../../../ncs:capability/ncs:uri = 'http://tail-f.com/ned/cisco-fmc'";
     tailf:action change-policy {
