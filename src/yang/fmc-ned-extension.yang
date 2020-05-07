@@ -1,0 +1,36 @@
+module fmc-ned-extension {
+
+  namespace "http://example.com/fmc-ned-extension";
+  prefix fmc-ned-extension;
+
+  import tailf-ncs { prefix ncs; }
+  import tailf-common { prefix tailf; }
+  import tailf-ned-cisco-fmc { prefix fmc; }
+
+  description
+    "Bla bla...";
+
+  revision 2016-01-01 {
+    description
+      "Initial revision.";
+  }
+
+  augment /ncs:devices/ncs:device/ncs:config/fmc:devices/fmc:devicerecords {
+    when "../../../ncs:capability/ncs:uri = 'http://tail-f.com/ned/cisco-fmc'";
+    tailf:action change-policy {
+      tailf:actionpoint fmc-ned-extension-action;
+      input {
+        leaf policy {
+          type leafref {
+             path "../../../../fmc:policy/fmc:accesspolicies/fmc:name";
+          }
+        }
+      }
+      output {
+        leaf result {
+          type string;
+        }
+      }
+    }
+  }
+}
